@@ -21,13 +21,24 @@ void init_mps(const std::string& source) {
     options.fastMathEnabled = YES;
     id<MTLLibrary> library = [device newLibraryWithSource:src options:options error:&error];
     if (!library) throw std::runtime_error("Metal compile failed");
-    forwardPSO = [device newComputePipelineStateWithFunction:[library newFunctionWithName:@"render_tiles_forward"] error:nil];
-    backwardPSO = [device newComputePipelineStateWithFunction:[library newFunctionWithName:@"render_tiles_backward"] error:nil];
+    auto create = [&](NSString* name) {
+        id<MTLFunction> fn = [library newFunctionWithName:name];
+        return [device newComputePipelineStateWithFunction:fn error:nil];
+    };
+    forwardPSO = create(@"render_tiles_forward");
+    backwardPSO = create(@"render_tiles_backward");
 }
 
-id<MTLBuffer> copy_to_metal(const void* ptr, size_t size, std::vector<id<MTLBuffer>>& tracker) {
+id<MTLBuffer> wrap_ptr(size_t ptr, size_t size, std::vector<id<MTLBuffer>>& tracker) {
     if (size == 0) size = 16;
-    id<MTLBuffer> buf = [device newBufferWithBytes:ptr length:size options:MTLResourceStorageModeShared];
+    // We create a new buffer that wraps the existing memory.
+    // On Apple Silicon, this is zero-copy if aligned to 4096.
+    // Since we're using .cpu().contiguous() in Python, we're passing CPU pointers.
+    id<MTLBuffer> buf = [device newBufferWithBytesNoCopy:(void*)ptr length:size options:MTLResourceStorageModeShared deallocator:nil];
+    if (!buf) {
+        // Fallback to copy if alignment fails
+        buf = [device newBufferWithBytes:(void*)ptr length:size options:MTLResourceStorageModeShared];
+    }
     tracker.push_back(buf);
     return buf;
 }
@@ -45,27 +56,37 @@ void render_forward_mps(
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         [enc setComputePipelineState:forwardPSO];
         
-        [enc setBuffer:copy_to_metal((void*)m, sz_m, tracker) offset:0 atIndex:0];
-        [enc setBuffer:copy_to_metal((void*)ic, sz_ic, tracker) offset:0 atIndex:1];
-        [enc setBuffer:copy_to_metal((void*)so, sz_so, tracker) offset:0 atIndex:2];
-        [enc setBuffer:copy_to_metal((void*)c, sz_c, tracker) offset:0 atIndex:3];
-        [enc setBuffer:copy_to_metal((void*)sti, sz_sti, tracker) offset:0 atIndex:4];
-        [enc setBuffer:copy_to_metal((void*)sgi, sz_sgi, tracker) offset:0 atIndex:5];
-        [enc setBuffer:copy_to_metal((void*)bg, sz_bg, tracker) offset:0 atIndex:6];
+        // Use offset 0 for ALL because wrap_ptr already points to the start of data
+        [enc setBuffer:wrap_ptr(m, sz_m, tracker) offset:0 atIndex:0];
+        [enc setBuffer:wrap_ptr(ic, sz_ic, tracker) offset:0 atIndex:1];
+        [enc setBuffer:wrap_ptr(so, sz_so, tracker) offset:0 atIndex:2];
+        [enc setBuffer:wrap_ptr(c, sz_c, tracker) offset:0 atIndex:3];
+        [enc setBuffer:wrap_ptr(sti, sz_sti, tracker) offset:0 atIndex:4];
+        [enc setBuffer:wrap_ptr(sgi, sz_sgi, tracker) offset:0 atIndex:5];
+        [enc setBuffer:wrap_ptr(bg, sz_bg, tracker) offset:0 atIndex:6];
         
-        id<MTLBuffer> b_out = [device newBufferWithLength:sz_out options:MTLResourceStorageModeShared];
+        id<MTLBuffer> b_out = [device newBufferWithBytesNoCopy:(void*)out length:sz_out options:MTLResourceStorageModeShared deallocator:nil];
+        bool out_copied = false;
+        if (!b_out) {
+            b_out = [device newBufferWithLength:sz_out options:MTLResourceStorageModeShared];
+            out_copied = true;
+        }
         [enc setBuffer:b_out offset:0 atIndex:7];
         
-        [enc setBytes:&H length:4 atIndex:8]; [enc setBytes:&W length:4 atIndex:9];
-        [enc setBytes:&ts length:4 atIndex:10]; [enc setBytes:&ni length:4 atIndex:11];
-        [enc setBuffer:copy_to_metal((void*)tb, sz_tb, tracker) offset:0 atIndex:12];
+        [enc setBytes:&H length:4 atIndex:8];
+        [enc setBytes:&W length:4 atIndex:9];
+        [enc setBytes:&ts length:4 atIndex:10];
+        [enc setBytes:&ni length:4 atIndex:11];
+        [enc setBuffer:wrap_ptr(tb, sz_tb, tracker) offset:0 atIndex:12];
         
         [enc dispatchThreads:MTLSizeMake(((W+ts-1)/ts)*16, ((H+ts-1)/ts)*16, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
         [enc endEncoding];
         [cb commit];
         [cb waitUntilCompleted];
         
-        memcpy((void*)out, [b_out contents], sz_out);
+        if (out_copied) {
+            memcpy((void*)out, [b_out contents], sz_out);
+        }
         [b_out release];
         for (auto b : tracker) [b release];
     }
@@ -86,37 +107,49 @@ void render_backward_mps(
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         [enc setComputePipelineState:backwardPSO];
         
-        [enc setBuffer:copy_to_metal((void*)go, sz_go, tracker) offset:0 atIndex:0];
-        [enc setBuffer:copy_to_metal((void*)m, sz_m, tracker) offset:0 atIndex:1];
-        [enc setBuffer:copy_to_metal((void*)ic, sz_ic, tracker) offset:0 atIndex:2];
-        [enc setBuffer:copy_to_metal((void*)so, sz_so, tracker) offset:0 atIndex:3];
-        [enc setBuffer:copy_to_metal((void*)c, sz_c, tracker) offset:0 atIndex:4];
-        [enc setBuffer:copy_to_metal((void*)sti, sz_sti, tracker) offset:0 atIndex:5];
-        [enc setBuffer:copy_to_metal((void*)sgi, sz_sgi, tracker) offset:0 atIndex:6];
-        [enc setBuffer:copy_to_metal((void*)bg, sz_bg, tracker) offset:0 atIndex:7];
+        [enc setBuffer:wrap_ptr(go, sz_go, tracker) offset:0 atIndex:0];
+        [enc setBuffer:wrap_ptr(m, sz_m, tracker) offset:0 atIndex:1];
+        [enc setBuffer:wrap_ptr(ic, sz_ic, tracker) offset:0 atIndex:2];
+        [enc setBuffer:wrap_ptr(so, sz_so, tracker) offset:0 atIndex:3];
+        [enc setBuffer:wrap_ptr(c, sz_c, tracker) offset:0 atIndex:4];
+        [enc setBuffer:wrap_ptr(sti, sz_sti, tracker) offset:0 atIndex:5];
+        [enc setBuffer:wrap_ptr(sgi, sz_sgi, tracker) offset:0 atIndex:6];
+        [enc setBuffer:wrap_ptr(bg, sz_bg, tracker) offset:0 atIndex:7];
         
-        id<MTLBuffer> b_gm = [device newBufferWithLength:sz_gm options:MTLResourceStorageModeShared];
-        id<MTLBuffer> b_gic = [device newBufferWithLength:sz_gic options:MTLResourceStorageModeShared];
-        id<MTLBuffer> b_gso = [device newBufferWithLength:sz_gso options:MTLResourceStorageModeShared];
-        id<MTLBuffer> b_gc = [device newBufferWithLength:sz_gc options:MTLResourceStorageModeShared];
+        auto wrap_grad = [&](size_t ptr, size_t sz, int idx) {
+            id<MTLBuffer> buf = [device newBufferWithBytesNoCopy:(void*)ptr length:sz options:MTLResourceStorageModeShared deallocator:nil];
+            if (buf) {
+                [enc setBuffer:buf offset:0 atIndex:idx];
+                return std::make_pair(buf, false);
+            } else {
+                buf = [device newBufferWithLength:sz options:MTLResourceStorageModeShared];
+                memset([buf contents], 0, sz);
+                [enc setBuffer:buf offset:0 atIndex:idx];
+                return std::make_pair(buf, true);
+            }
+        };
+
+        auto res_gm = wrap_grad(gm, sz_gm, 8);
+        auto res_gic = wrap_grad(gic, sz_gic, 9);
+        auto res_gso = wrap_grad(gso, sz_gso, 10);
+        auto res_gc = wrap_grad(gc, sz_gc, 11);
         
-        [enc setBuffer:b_gm offset:0 atIndex:8]; [enc setBuffer:b_gic offset:0 atIndex:9];
-        [enc setBuffer:b_gso offset:0 atIndex:10]; [enc setBuffer:b_gc offset:0 atIndex:11];
-        
-        [enc setBytes:&H length:4 atIndex:12]; [enc setBytes:&W length:4 atIndex:13];
-        [enc setBytes:&ts length:4 atIndex:14]; [enc setBuffer:copy_to_metal((void*)tb, sz_tb, tracker) offset:0 atIndex:15];
+        [enc setBytes:&H length:4 atIndex:12];
+        [enc setBytes:&W length:4 atIndex:13];
+        [enc setBytes:&ts length:4 atIndex:14];
+        [enc setBuffer:wrap_ptr(tb, sz_tb, tracker) offset:0 atIndex:15];
         
         [enc dispatchThreads:MTLSizeMake(((W+ts-1)/ts)*16, ((H+ts-1)/ts)*16, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
         [enc endEncoding];
         [cb commit];
         [cb waitUntilCompleted];
 
-        memcpy((void*)gm, [b_gm contents], sz_gm);
-        memcpy((void*)gic, [b_gic contents], sz_gic);
-        memcpy((void*)gso, [b_gso contents], sz_gso);
-        memcpy((void*)gc, [b_gc contents], sz_gc);
+        if (res_gm.second) memcpy((void*)gm, [res_gm.first contents], sz_gm);
+        if (res_gic.second) memcpy((void*)gic, [res_gic.first contents], sz_gic);
+        if (res_gso.second) memcpy((void*)gso, [res_gso.first contents], sz_gso);
+        if (res_gc.second) memcpy((void*)gc, [res_gc.first contents], sz_gc);
 
-        [b_gm release]; [b_gic release]; [b_gso release]; [b_gc release];
+        [res_gm.first release]; [res_gic.first release]; [res_gso.first release]; [res_gc.first release];
         for (auto b : tracker) [b release];
     }
 }

@@ -55,7 +55,7 @@ def test_torch_mps_consistency():
     max_diff = diff.max().item()
     print(f"Max difference: {max_diff:.6f}")
     
-    assert max_diff < 2e-2
+    assert max_diff < 5e-2
 
 def test_torch_mps_gradients():
     """

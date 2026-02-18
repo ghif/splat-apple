@@ -9,7 +9,6 @@ from torch_gs.core.gaussians import Gaussians
 from torch_gs.renderer.projection import project_gaussians
 from torch_gs.renderer.rasterizer import get_tile_interactions, render_tiles, TILE_SIZE
 from torch_gs.renderer.rasterizer_cpp import get_tile_interactions_cpp, render_tiles_cpp
-from torch_gs.renderer.rasterizer_mps import render_tiles_mps
 
 def render(gaussians: Gaussians, camera, background=None, device="mps", rasterizer_type="python"):
     """
@@ -27,18 +26,8 @@ def render(gaussians: Gaussians, camera, background=None, device="mps", rasteriz
     
     # 3. Geometry & Visibility: Determine tile interactions
     if rasterizer_type == "cpp":
-        # Phase 4: Use GPU-resident interactions + Metal rasterizer
-        sorted_tile_ids, sorted_gaussian_ids = get_tile_interactions(
-            means2D, radii, valid_mask, depths, camera.H, camera.W, TILE_SIZE, device=device
-        )
-        
-        image = render_tiles_mps(
-            means2D, cov2D, gaussians.opacities, colors,
-            sorted_tile_ids, sorted_gaussian_ids,
-            camera.H, camera.W, TILE_SIZE, background, device=device
-        )
-    elif rasterizer_type == "cpu_legacy":
-        # Old CPU-based C++ rasterizer
+        # Revert to stable multi-threaded CPU implementation for PyTorch
+        # This was verified to be correct and avoids Metal synchronization issues in PyTorch.
         sorted_tile_ids, sorted_gaussian_ids = get_tile_interactions_cpp(
             means2D, radii, valid_mask, depths, camera.H, camera.W, TILE_SIZE, device=device
         )
@@ -49,7 +38,7 @@ def render(gaussians: Gaussians, camera, background=None, device="mps", rasteriz
             camera.H, camera.W, TILE_SIZE, background, device=device
         )
     else:
-        # Pure Python vectorized path
+        # Pure Python vectorized path (now fixed for quality parity)
         sorted_tile_ids, sorted_gaussian_ids = get_tile_interactions(
             means2D, radii, valid_mask, depths, camera.H, camera.W, TILE_SIZE, device=device
         )
