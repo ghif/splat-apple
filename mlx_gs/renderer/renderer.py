@@ -44,11 +44,8 @@ def render(gaussians, camera, background=None, rasterizer_type="python"):
         if rasterizer_metal is None or rasterizer_metal.rasterizer_metal is None:
             raise ImportError("Metal rasterizer not available. Please build the extension.")
             
-        # Metal mode uses C API for interactions (shared logic)
-        if rasterizer_c is None:
-             raise ImportError("Metal rasterizer requires C API interactions module.")
-
-        sorted_tile_ids, sorted_gaussian_ids = rasterizer_c.get_tile_interactions(
+        # Phase 4: Use GPU-resident interactions
+        sorted_tile_ids, sorted_gaussian_ids = rasterizer_metal.get_tile_interactions(
             means2D, radii, valid_mask, depths, camera.H, camera.W, rasterizer.TILE_SIZE
         )
         

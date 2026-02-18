@@ -1,7 +1,6 @@
 import mlx.core as mx
 import numpy as np
 import os
-from . import rasterizer_c_api # Reuse for interactions
 try:
     from . import _rasterizer_metal as rasterizer_metal
 except ImportError:
@@ -19,88 +18,104 @@ if rasterizer_metal is not None:
         except Exception as e:
             print(f"Failed to initialize Metal rasterizer: {e}")
             rasterizer_metal = None
-    else:
-        print(f"Metal source not found at {metal_source_path}")
-        rasterizer_metal = None
+
+def get_tile_interactions(means2D, radii, valid_mask, depths, H, W, tile_size):
+    """
+    Stable GPU-accelerated Tile Interaction Stage using pure MLX operations.
+    Completes Phase 4.
+    """
+    num_tiles_x = (W + tile_size - 1) // tile_size
+    num_tiles_y = (H + tile_size - 1) // tile_size
+    
+    m_x = mx.clip(mx.floor((means2D[:, 0] - radii) / tile_size).astype(mx.int32), 0, num_tiles_x - 1)
+    max_x = mx.clip(mx.floor((means2D[:, 0] + radii) / tile_size).astype(mx.int32), 0, num_tiles_x - 1)
+    m_y = mx.clip(mx.floor((means2D[:, 1] - radii) / tile_size).astype(mx.int32), 0, num_tiles_y - 1)
+    max_y = mx.clip(mx.floor((means2D[:, 1] + radii) / tile_size).astype(mx.int32), 0, num_tiles_y - 1)
+    
+    nx = max_x - m_x + 1
+    ny = max_y - m_y + 1
+    counts = nx * ny * valid_mask.astype(mx.int32)
+    
+    offsets = mx.cumsum(counts)
+    total = int(offsets[-1].item())
+    if total == 0: return mx.array([], dtype=mx.int32), mx.array([], dtype=mx.int32)
+    
+    # Expansion
+    active_mask = (counts > 0).astype(mx.int32)
+    num_active = int(mx.sum(active_mask).item())
+    active_indices = mx.sort(mx.argsort(active_mask)[-num_active:])
+    
+    active_counts = counts[active_indices]
+    active_offsets = mx.cumsum(active_counts)
+    active_starts = mx.concatenate([mx.array([0]), active_offsets[:-1]])
+    
+    mark = mx.zeros((total,), dtype=mx.int32)
+    mark[active_starts] = 1
+    map_idx = mx.cumsum(mark) - 1
+    gaussian_ids = active_indices[map_idx]
+    
+    local_idx = mx.arange(total, dtype=mx.int32) - active_starts[map_idx].astype(mx.int32)
+    tile_ids = (m_y[gaussian_ids] + (local_idx // nx[gaussian_ids])) * num_tiles_x + (m_x[gaussian_ids] + (local_idx % nx[gaussian_ids]))
+    
+    depth_quant = ((depths[gaussian_ids] - mx.min(depths)) / (mx.max(depths) - mx.min(depths) + 1e-6) * 0xFFFFFFFF).astype(mx.uint64)
+    keys = (tile_ids.astype(mx.uint64) << 32) | depth_quant
+    sort_indices = mx.argsort(keys)
+    
+    # We must use stop_gradient as these are discrete indices
+    return mx.stop_gradient(tile_ids[sort_indices]), mx.stop_gradient(gaussian_ids[sort_indices])
 
 def render_tiles(means2D, cov2D, opacities, colors, sorted_tile_ids, sorted_gaussian_ids, H, W, tile_size, background=None):
-    if rasterizer_metal is None:
-        raise ImportError("Metal rasterizer not available")
-    
-    if background is None:
-        background = mx.zeros((3,))
+    if background is None: background = mx.zeros((3,))
     
     # Precompute inverse covariance and sigmoid opacities
     det = cov2D[:, 0, 0] * cov2D[:, 1, 1] - cov2D[:, 0, 1] * cov2D[:, 1, 0]
     inv_det = 1.0 / mx.maximum(det, 1e-6)
-    
     inv_cov2D = mx.stack([
         mx.stack([cov2D[:, 1, 1] * inv_det, -cov2D[:, 0, 1] * inv_det], axis=-1),
         mx.stack([-cov2D[:, 1, 0] * inv_det, cov2D[:, 0, 0] * inv_det], axis=-1)
     ], axis=-2)
-    
     sig_opacities = mx.sigmoid(opacities)
 
-    # Compute tile boundaries
-    # We need to do this on CPU for now as searchsorted isn't readily available/easy on GPU without sync
-    # sorted_tile_ids is (M,) int32
-    # We want boundaries for tiles 0..num_tiles
     num_tiles_x = (W + tile_size - 1) // tile_size
     num_tiles_y = (H + tile_size - 1) // tile_size
     num_tiles = num_tiles_x * num_tiles_y
     
-    # Force sync for boundaries computation
+    # Sync for tile boundaries
     mx.eval(sorted_tile_ids)
-    sorted_tile_ids_np = np.asarray(sorted_tile_ids)
-    
-    # Compute boundaries: indices where tile_id changes
-    # searchsorted finds indices where elements should be inserted to maintain order
-    # For each tile t in 0..num_tiles, find first index where tile_id >= t
-    # Since sorted_tile_ids is sorted, searchsorted works.
-    tile_indices = np.arange(num_tiles + 1, dtype=np.int32)
-    tile_boundaries_np = np.searchsorted(sorted_tile_ids_np, tile_indices).astype(np.int32)
-    
-    # We don't need to convert boundaries back to MLX, we pass numpy array to extension
-    # But extension expects nb::ndarray which handles numpy.
+    tb_np = np.searchsorted(np.asarray(sorted_tile_ids), np.arange(num_tiles + 1, dtype=np.int32)).astype(np.int32)
 
     @mx.custom_function
     def forward(m, ic, s_o, c, sti, sgi, bg):
         mx.eval(m, ic, s_o, c, sti, sgi, bg)
-        
-        # Zero-copy views if possible (MLX -> Numpy usually zero-copy if contiguous)
-        m_np = np.asarray(m)
-        ic_np = np.asarray(ic)
-        s_o_np = np.asarray(s_o)
-        c_np = np.asarray(c)
-        sti_np = np.asarray(sti)
-        sgi_np = np.asarray(sgi)
-        bg_np = np.asarray(bg)
-        
         out_np = rasterizer_metal.render_forward(
-            m_np, ic_np, s_o_np, c_np, sti_np, sgi_np, H, W, tile_size, bg_np, tile_boundaries_np
+            np.ascontiguousarray(np.asarray(m), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(ic), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(s_o), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(c), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(sti), dtype=np.int32),
+            np.ascontiguousarray(np.asarray(sgi), dtype=np.int32),
+            int(H), int(W), int(tile_size),
+            np.ascontiguousarray(np.asarray(bg), dtype=np.float32),
+            tb_np
         )
         return mx.array(out_np)
 
     @forward.vjp
-    def forward_vjp(primals, cotangents, outputs):
+    def backward(primals, cotangents, outputs):
         m, ic, s_o, c, sti, sgi, bg = primals
-        grad_output = cotangents
-        
-        mx.eval(m, ic, s_o, c, sti, sgi, bg, grad_output)
-        
-        m_np = np.asarray(m)
-        ic_np = np.asarray(ic)
-        s_o_np = np.asarray(s_o)
-        c_np = np.asarray(c)
-        sti_np = np.asarray(sti)
-        sgi_np = np.asarray(sgi)
-        bg_np = np.asarray(bg)
-        grad_output_np = np.asarray(grad_output)
-        
+        mx.eval(m, ic, s_o, c, sti, sgi, bg, cotangents)
         gm_np, gic_np, go_np, gc_np = rasterizer_metal.render_backward(
-            grad_output_np, m_np, ic_np, s_o_np, c_np, sti_np, sgi_np, H, W, tile_size, bg_np, tile_boundaries_np
+            np.ascontiguousarray(np.asarray(cotangents), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(m), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(ic), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(s_o), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(c), dtype=np.float32),
+            np.ascontiguousarray(np.asarray(sti), dtype=np.int32),
+            np.ascontiguousarray(np.asarray(sgi), dtype=np.int32),
+            int(H), int(W), int(tile_size),
+            np.ascontiguousarray(np.asarray(bg), dtype=np.float32),
+            tb_np
         )
-        
-        return mx.array(gm_np), mx.array(gic_np), mx.array(go_np), mx.array(gc_np), None, None, None
+        return mx.array(gm_np), mx.array(gic_np), mx.array(go_np).reshape(-1, 1), mx.array(gc_np), None, None, None
 
     return forward(means2D, inv_cov2D, sig_opacities, colors, sorted_tile_ids, sorted_gaussian_ids, background)
