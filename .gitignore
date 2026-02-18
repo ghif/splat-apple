@@ -33,3 +33,8 @@ BLOG_files/
 .pytest_cache/
 debug_import.py
 debug_module.py
+MLX_implementation.md
+PYTORCH_implementation.md
+BLOG.md
+GEMINI.md
+MLX_C_STRATEGY.md
