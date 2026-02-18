@@ -1,0 +1,10 @@
+torch
+pytest
+numpy
+tqdm
+pillow
+plyfile
+viser
+mlx
+nanobind
+setuptools

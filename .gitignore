@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Build / Extensions
+build/
+dist/
+*.egg-info/
+*.o
+*.obj
+*.a
+*.lib
+
+# OS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Project Specific
+results/
+data/
+*.ply
+*.png
+*.jpg
+*.jpeg
+*.gif
+BLOG.html
+BLOG_files/
+.pytest_cache/
+debug_import.py
+debug_module.py
