@@ -15,7 +15,7 @@ from mlx_gs.io.colmap import load_colmap_dataset
 from mlx_gs.training.trainer import train_step, Camera
 
 # Configuration
-DATA_DIR = "/Users/mghifary/Work/Code/AI/data/gsplat"
+DATA_DIR = "/Users/mghifary/Work/Code/AI/data/gsplat/nerf_real_360/pinecone"
 
 def save_ply(path, gaussians):
     """
@@ -53,32 +53,53 @@ def save_ply(path, gaussians):
 
 def run_training(num_iterations: int = 2000, rasterizer_type="python"):
     """
-    MLX training loop.
+    MLX training loop for pinecone dataset.
     """
     # 1. Load Data
-    path = os.path.join(DATA_DIR, "intro_to_deep_learning_with_mlx_data/ferns")
-    if not os.path.exists(path):
-        # Fallback to standard path if my specific user path doesn't exist
-        path = os.path.join(DATA_DIR, "nerf_example_data/nerf_llff_data/fern")
+    path = DATA_DIR
     
     print(f"Loading data from {path}...")
     xyz, rgb, cameras, targets = load_colmap_dataset(path, "images_8")
     
-    print(f"Loaded {len(xyz)} points")
-    print(f"Point cloud range: min={xyz.min(0)}, max={xyz.max(0)}")
-    print(f"Point colors range: min={rgb.min(0)}, max={rgb.max(0)}")
-    print(f"Prepared {len(cameras)} cameras")
-    print(f"First camera: W={cameras[0].W}, H={cameras[0].H}, fx={cameras[0].fx}, fy={cameras[0].fy}")
-    
+    # Scene normalization (Targeted for Pinecone/Mip-NeRF 360)
     cam_centers = []
     for cam in cameras:
         # W2C is [R | T], so C = -R^T * T
-        R = np.array(cam.W2C[:3, :3])
-        T = np.array(cam.W2C[:3, 3])
+        # We use mx to numpy for easier calc here
+        w2c = np.array(cam.W2C)
+        R = w2c[:3, :3]
+        T = w2c[:3, 3]
         C = -R.T @ T
         cam_centers.append(C)
     cam_centers = np.array(cam_centers)
-    print(f"Camera centers range: min={cam_centers.min(0)}, max={cam_centers.max(0)}")
+    
+    centroid = np.mean(cam_centers, axis=0)
+    avg_dist = np.mean(np.linalg.norm(cam_centers - centroid, axis=1))
+    scale = 1.0 / (avg_dist + 1e-6)
+    
+    print(f"Normalizing scene: centroid={centroid}, scale={scale}")
+    xyz = (xyz - centroid) * scale
+    
+    # Update cameras
+    for cam in cameras:
+        w2c = np.array(cam.W2C)
+        R = w2c[:3, :3]
+        T = w2c[:3, 3]
+        # New T = (R @ centroid + T) * scale
+        new_T = (R @ centroid + T) * scale
+        new_w2c = np.eye(4)
+        new_w2c[:3, :3] = R
+        new_w2c[:3, 3] = new_T
+        cam.W2C = mx.array(new_w2c, dtype=mx.float32)
+
+    # Handle zero colors: if all are zero, initialize with random colors
+    if np.all(rgb == 0):
+        print("Detected zero colors in point cloud. Initializing with random colors.")
+        rgb = np.random.uniform(0.4, 0.6, size=rgb.shape)
+
+    print(f"Loaded {len(xyz)} points")
+    print(f"Point colors range: min={rgb.min(0)}, max={rgb.max(0)}")
+    print(f"Prepared {len(cameras)} cameras")
     
     # 2. Initialize Gaussians
     gaussians = init_gaussians_from_pcd(xyz, rgb)
@@ -104,9 +125,9 @@ def run_training(num_iterations: int = 2000, rasterizer_type="python"):
     # 4. Preparation for Logging
     os.makedirs("results", exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join("results", f"fern_mlx_{timestamp}")
+    output_dir = os.path.join("results", f"pinecone_mlx_{timestamp}")
     if rasterizer_type == "cpp":
-        output_dir = os.path.join("results", f"fern_mlx_cpp_{timestamp}")
+        output_dir = os.path.join("results", f"pinecone_mlx_cpp_{timestamp}")
     progress_dir = os.path.join(output_dir, "progress")
     ply_dir = os.path.join(output_dir, "ply")
     os.makedirs(progress_dir, exist_ok=True)
@@ -139,10 +160,10 @@ def run_training(num_iterations: int = 2000, rasterizer_type="python"):
     # Export final
     gaussians_final = Gaussians(**params)
     print("Training done. Saving final model...")
-    save_ply(os.path.join(ply_dir, "fern_final.ply"), gaussians_final)
+    save_ply(os.path.join(ply_dir, "pinecone_final.ply"), gaussians_final)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Gaussian Splatting on MLX")
+    parser = argparse.ArgumentParser(description="Train Gaussian Splatting on MLX (Pinecone)")
     parser.add_argument("--num_iterations", type=int, default=2000, help="Number of training steps")
     parser.add_argument("--rasterizer", type=str, default="python", choices=["python", "cpp"], help="Rasterizer version")
     args = parser.parse_args()

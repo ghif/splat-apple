@@ -22,19 +22,23 @@ def project_gaussians(gaussians, camera):
     fx, fy = camera.fx, camera.fy
     cx, cy = camera.cx, camera.cy
     
-    # Safe division
-    z_safe = mx.maximum(z, 1e-6)
+    # Safe division: use 1.0 for invalid points to avoid NaNs, 
+    # they will be masked out by valid_mask anyway.
+    z_safe = mx.where(valid_mask, z, mx.ones_like(z))
     means2D = mx.stack([fx * (x / z_safe) + cx, fy * (y / z_safe) + cy], axis=1)
     
     # 3. 2D Covariance
     Sigma = get_covariance_3d(gaussians.scales, gaussians.quaternions)
     
     # Jacobian
+    inv_z = 1.0 / z_safe
+    inv_z2 = inv_z * inv_z
+    
     J = mx.zeros((z.shape[0], 2, 3))
-    J[:, 0, 0] = fx / z_safe
-    J[:, 0, 2] = -(fx * x) / (z_safe * z_safe)
-    J[:, 1, 1] = fy / z_safe
-    J[:, 1, 2] = -(fy * y) / (z_safe * z_safe)
+    J[:, 0, 0] = fx * inv_z
+    J[:, 0, 2] = -(fx * x) * inv_z2
+    J[:, 1, 1] = fy * inv_z
+    J[:, 1, 2] = -(fy * y) * inv_z2
     
     W_rot = W2C[:3, :3]
     M = J @ W_rot
@@ -58,5 +62,8 @@ def project_gaussians(gaussians, camera):
     
     # Mask invalid to ensure they don't contribute
     radii = mx.where(valid_mask, radii, mx.zeros_like(radii))
+    
+    # Clamp radii to avoid massive Gaussians from numerical issues
+    radii = mx.clip(radii, 0, 1000)
     
     return means2D, cov2D, radii, valid_mask, z
