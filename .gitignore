@@ -27,7 +27,6 @@ data/
 *.png
 *.jpg
 *.jpeg
-*.gif
 BLOG.html
 BLOG_files/
 .pytest_cache/

@@ -1,55 +1,83 @@
 # Splat Apple: 3D Gaussian Splatting on Apple Silicon
 
-This repository provides high-performance implementations of 3D Gaussian Splatting optimized for Apple Silicon (M1/M2/M3), supporting both **PyTorch (MPS)** and **MLX**.
+This repository provides high-performance implementations of 3D Gaussian Splatting (3DGS) optimized for Apple Silicon (M1/M2/M3/M4). It supports both **MLX** and **PyTorch (MPS)** backends, delivering production-grade speeds that rival discrete GPU setups.
 
-## Recent Updates (February 2026)
+## Performance Highlights (Apple M4)
 
-### MLX Native Rasterizers
-- **Metal GPU Rasterizer**: A fully GPU-resident rasterizer implemented in Metal Shading Language. It achieves ~10 it/s on M-series chips, matching specialized PyTorch C++ performance while remaining entirely within the MLX ecosystem.
-- **C++ CPU Rasterizer**: A multi-threaded CPU implementation using Apple's Grand Central Dispatch (GCD) for parallel tile-based rendering.
+Benchmarked on the standard **Fern** scene (10,091 Gaussians):
 
-### PyTorch Fixes
-- **Differentiable Covariance**: Fixed the `grad_cov2D` implementation to allow Gaussians to grow and rotate during training.
-- **High-Quality Python Rasterizer**: Removed the 8x8 tile coverage and 256 depth limits from the pure Python implementation, matching the visual quality of the C++ version.
-- **Atomic Gradient Accumulation**: Implemented thread-safe gradient updates for overlapping Gaussians on the CPU.
+| Backend | Implementation | Speed (Steady-State) | Speedup |
+| :--- | :--- | :--- | :--- |
+| **MLX** | **C++ Metal (GPU-Resident)** | **~42.3 it/s** | **50x** |
+| **PyTorch** | **C++ (GCD)** | **~10.6 it/s** | **12x** |
+| **MLX** | Pure Python (Reference) | ~1.2 it/s | 1.4x |
+| **PyTorch** | Pure Python (Reference) | ~0.8 it/s | 1.0x |
 
-## Setup Instructions
+![Training Progress](resources/training_progress.gif)
 
-Always use the `gs-mps` conda environment.
+---
 
-### 1. Build PyTorch C++ Extension
-Required for the `cpp` rasterizer mode in PyTorch.
+## Notes on C++ Rasterizer
+On C++ mode, the rasterizer is implemented differently between MLX and PyTorch. MLX uses the full Metal Performance Shaders (MPS) framework, while PyTorch uses the GCD framework. This makes MLX able to achieve much higher performance than PyTorch, as it can fully utilize the GPU's parallel processing capabilities.
+
+---
+
+## Installation & Setup
+
+### 1. Environment Setup (Conda)
+It is recommended to use **Conda** to manage the environment for this project. 
+
+Create and activate the `gs-mps` environment:
 ```bash
-python setup.py build_ext --inplace
+# Create the environment with Python 3.13
+conda create -n gs-mps python=3.13 -y
+
+# Activate the environment
+conda activate gs-mps
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-### 2. Build MLX Native Extensions
-Required for the `cpp` (GPU-resident) rasterizer mode in MLX.
+### 2. Build MLX Native Extensions (Highly Recommended)
+Required for the high-performance `cpp` mode in MLX.
 ```bash
 python setup_mlx.py build_ext --inplace
 ```
 
-## Running Training
-
-### MLX Training (Recommended)
-The MLX implementation is highly optimized for Apple Silicon unified memory.
-- **Metal GPU (Fastest)**:
-  ```bash
-  python train_fern_mlx.py --rasterizer cpp
-  ```
-
-### PyTorch Training
-- **C++ Optimized**:
-  ```bash
-  python train_fern_torch.py --rasterizer cpp
-  ```
-
-## Benchmarking
-Compare the performance of all implementations:
+### 3. Build PyTorch C++ Extensions
+Required for the optimized `cpp` mode in PyTorch.
 ```bash
-export PYTHONPATH=$PYTHONPATH:.
-python tests/benchmark_mlx_vs_torch.py
+python setup.py build_ext --inplace
 ```
 
-## Documentation
-For technical details on the MLX implementation strategy, see [MLX_C_STRATEGY.md](MLX_C_STRATEGY.md).
+---
+
+## Running Training
+
+### MLX Implementation (Fastest)
+The MLX version is designed from the ground up for Apple's Unified Memory Architecture.
+```bash
+# High-Performance Metal Mode (Recommended)
+python train_fern_mlx.py --rasterizer cpp
+
+# High-Quality Python Reference
+python train_fern_mlx.py --rasterizer python
+```
+
+### PyTorch Implementation (Stable)
+```bash
+# Multi-threaded C++ Mode
+python train_fern_torch.py --rasterizer cpp
+
+# High-Quality Python Reference
+python train_fern_torch.py --rasterizer python
+```
+---
+
+## Benchmarking
+To compare the performance of all implementations on your specific hardware:
+```bash
+export PYTHONPATH=$PYTHONPATH:.
+python tests/benchmark_mlx_vs_torch.py --num_runs 10
+```
