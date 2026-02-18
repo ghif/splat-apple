@@ -16,155 +16,57 @@ BLOCK_SIZE = 256
 def get_tile_interactions(means2D, radii, valid_mask, depths, H, W, tile_size: int = TILE_SIZE, device="mps"):
     """
     Determine which Gaussians overlap which screen tiles and sort them by depth.
-    
-    Args:
-        means2D (torch.Tensor): (N, 2) Screen-space means.
-        radii (torch.Tensor): (N,) Influence radii.
-        valid_mask (torch.Tensor): (N,) Initial validity mask from projection.
-        depths (torch.Tensor): (N,) Z-depth for sorting.
-        H, W (int): Image dimensions.
-        tile_size (int): Size of each tile.
-        device (str): Computation device.
-        
-    Returns:
-        tuple: (sorted_tile_ids, sorted_gaussian_ids)
-            - sorted_tile_ids: Tile ID for each valid interaction, sorted.
-            - sorted_gaussian_ids: Gaussian ID for each interaction.
+    Dynamic expansion version (Phase 4).
     """
     num_points = means2D.shape[0]
     num_tiles_x = (W + tile_size - 1) // tile_size
     num_tiles_y = (H + tile_size - 1) // tile_size
     
     # Calculate bounding boxes in tile coordinates
-    min_x = torch.clamp((means2D[:, 0] - radii), 0, W - 1)
-    max_x = torch.clamp((means2D[:, 0] + radii), 0, W - 1)
-    min_y = torch.clamp((means2D[:, 1] - radii), 0, H - 1)
-    max_y = torch.clamp((means2D[:, 1] + radii), 0, H - 1)
+    min_x = torch.clamp(torch.floor((means2D[:, 0] - radii) / tile_size), 0, num_tiles_x - 1).to(torch.int32)
+    max_x = torch.clamp(torch.floor((means2D[:, 0] + radii) / tile_size), 0, num_tiles_x - 1).to(torch.int32)
+    min_y = torch.clamp(torch.floor((means2D[:, 1] - radii) / tile_size), 0, num_tiles_y - 1).to(torch.int32)
+    max_y = torch.clamp(torch.floor((means2D[:, 1] + radii) / tile_size), 0, num_tiles_y - 1).to(torch.int32)
     
-    tile_min_x = (min_x // tile_size).to(torch.int32)
-    tile_max_x = (max_x // tile_size).to(torch.int32)
-    tile_min_y = (min_y // tile_size).to(torch.int32)
-    tile_max_y = (max_y // tile_size).to(torch.int32)
+    nx = max_x - min_x + 1
+    ny = max_y - min_y + 1
     
-    # Filter points completely outside image
-    on_screen = (means2D[:, 0] + radii > 0) & (means2D[:, 0] - radii < W) & \
-                (means2D[:, 1] + radii > 0) & (means2D[:, 1] - radii < H)
+    # Filter points completely outside image or invalid
+    counts = nx * ny * valid_mask.to(torch.int32)
     
-    valid_mask = valid_mask & on_screen & (tile_max_x >= tile_min_x) & (tile_max_y >= tile_min_y)
+    total_interactions = counts.sum().item()
+    if total_interactions == 0:
+        return torch.empty(0, device=device, dtype=torch.int32), torch.empty(0, device=device, dtype=torch.int32)
     
-    # We need a fixed grid size for vmap (like 8x8) or just broadcasting
-    # torch.vmap is available in newer torch versions, but we can standard broadcasting for compatibility
+    # Expansion: Find which Gaussian each interaction belongs to
+    # repeat_interleave is perfect for this
+    gaussian_ids = torch.repeat_interleave(torch.arange(num_points, device=device), counts)
     
-    # Pre-calculate relative tile offsets for broadcasting (8x8 grid assumption for max coverage)
-    OFFSET_SIZE = 8
-    ys = torch.arange(OFFSET_SIZE, device=device)
-    xs = torch.arange(OFFSET_SIZE, device=device)
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
-    off_x = grid_x.flatten()
-    off_y = grid_y.flatten()
-
-    # Broadcase to find all tiles each Gaussian touches
-    # tile_min_x: (N,) -> (N, 1)
-    # off_x: (64,) -> (1, 64)
-    abs_x = tile_min_x.unsqueeze(1) + off_x.unsqueeze(0)
-    abs_y = tile_min_y.unsqueeze(1) + off_y.unsqueeze(0)
+    # Find local tile offset for each expanded interaction
+    # Equivalent to mx.cumsum trick but using repeat_interleave + arange
+    offsets = torch.cumsum(counts, dim=0)
+    prev_offsets = torch.cat([torch.tensor([0], device=device, dtype=torch.int64), offsets[:-1]])
+    local_idx = torch.arange(total_interactions, device=device) - prev_offsets[gaussian_ids]
     
-    in_range = (abs_x <= tile_max_x.unsqueeze(1)) & (abs_y <= tile_max_y.unsqueeze(1)) & valid_mask.unsqueeze(1)
+    # Compute Tile IDs
+    cur_nx = nx[gaussian_ids]
+    lx = local_idx % cur_nx
+    ly = local_idx // cur_nx
     
-    all_tile_ids = abs_y * num_tiles_x + abs_x
-    all_tile_ids = torch.where(in_range, all_tile_ids, torch.tensor(-1, device=device, dtype=torch.int32))
+    tile_x = min_x[gaussian_ids] + lx
+    tile_y = min_y[gaussian_ids] + ly
+    tile_ids = tile_y * num_tiles_x + tile_x
     
-    all_gaussian_ids = torch.arange(num_points, device=device).unsqueeze(1).expand(-1, 64)
+    # Sorting
+    d_vals = depths[gaussian_ids]
+    d_min, d_max = d_vals.min(), d_vals.max()
+    depth_quant = ((d_vals - d_min) / (d_max - d_min + 1e-6) * 0xFFFFFFFF).to(torch.int64)
+    keys = (tile_ids.to(torch.int64) << 32) | depth_quant
     
-    flat_tile_ids = all_tile_ids.reshape(-1)
-    flat_gaussian_ids = all_gaussian_ids.reshape(-1)
-    flat_depths = depths.unsqueeze(1).expand(-1, 64).reshape(-1)
+    sort_indices = torch.argsort(keys)
     
-    valid_interactions = flat_tile_ids != -1
-    
-    # Pack-Sort: Create a key combining TileID and Depth for efficient sorting
-    # TileID in high bits, Depth in low bits -> sorting by key = primary sort by tile, secondary by depth
-    DEPTH_BITS = 13
-    num_tiles_total = num_tiles_x * num_tiles_y
-    
-    sort_tile_ids = torch.where(valid_interactions, flat_tile_ids, torch.tensor(num_tiles_total, device=device, dtype=torch.int32))
-    
-    # Quantize depths to fit in remaining bits
-    depth_min = flat_depths.min()
-    depth_max = flat_depths.max()
-    depth_quant = ((flat_depths - depth_min) / (depth_max - depth_min + 1e-6) * (2**DEPTH_BITS - 1)).to(torch.int32)
-    
-    # MPS doesn't support 64-bit integers well in all ops, but let's try
-    # If 64-bit sort fails, we might need to sort by tile then depth separately (stable sort)
-    # key = (sort_tile_ids.to(torch.int64) << DEPTH_BITS) | depth_quant.to(torch.int64)
-    # sort_indices = torch.argsort(key)
-    
-    # Alternative stable sort:
-    # 1. Sort by depth
-    # 2. Sort by tile (stable)
-    # current_indices = torch.argsort(depth_quant)
-    # sorted_tile_ids_temp = sort_tile_ids[current_indices]
-    # sort_indices_stable = torch.argsort(sorted_tile_ids_temp, stable=True)
-    # final_indices = current_indices[sort_indices_stable]
-    
-    # But let's stick to the packed key if possible, it's faster.
-    # Fallback for MPS if int64 is an issue:
-    # Key construction (64-bit integer)
-    key = (sort_tile_ids.to(torch.int64) << DEPTH_BITS) | depth_quant.to(torch.int64)
-    sort_indices = torch.argsort(key)
-    
-    sorted_tile_ids = sort_tile_ids[sort_indices]
-    sorted_gaussian_ids = flat_gaussian_ids[sort_indices]
-    
-    # Filter out invalid interactions (sentinels pushed to end by sort)
-    valid_count = valid_interactions.sum()
-    sorted_tile_ids = sorted_tile_ids[:valid_count]
-    sorted_gaussian_ids = sorted_gaussian_ids[:valid_count]
-    
-    return sorted_tile_ids, sorted_gaussian_ids
-
-def render_tiles(means2D, cov2D, opacities, colors, sorted_tile_ids, sorted_gaussian_ids, 
-                 H, W, tile_size: int = TILE_SIZE, background=None, device="mps"):
-    """
-    Render tiles using PyTorch.
-    """
-    if background is None:
-        background = torch.zeros(3, device=device)
-        
-    num_tiles_x = (W + tile_size - 1) // tile_size
-    num_tiles_y = (H + tile_size - 1) // tile_size
-    num_tiles = num_tiles_x * num_tiles_y
-    
-    det = cov2D[:, 0, 0] * cov2D[:, 1, 1] - cov2D[:, 0, 1]**2
-    det = torch.clamp(det, min=1e-6)
-    
-    # Inverse covariance
-    # [[a, b], [c, d]] -> 1/det * [[d, -b], [-c, a]]
-    inv_cov2D = torch.stack([
-        torch.stack([cov2D[:, 1, 1] / det, -cov2D[:, 0, 1] / det], dim=-1),
-        torch.stack([-cov2D[:, 1, 0] / det, cov2D[:, 0, 0] / det], dim=-1)
-    ], dim=-2)
-    
-    sig_opacities = torch.sigmoid(opacities)
-
-    # Calculate tile boundaries
-    sorted_tile_ids_cpu = sorted_tile_ids.cpu().numpy()
-    tile_indices = np.arange(num_tiles + 1)
-    tile_boundaries = np.searchsorted(sorted_tile_ids_cpu, tile_indices)
-    tile_boundaries = torch.from_numpy(tile_boundaries).to(device)
-
-    # Calculate tile-to-pixel offsets
-    tile_indices_all = torch.arange(num_tiles, device=device)
-    ty_all = tile_indices_all // num_tiles_x
-    tx_all = tile_indices_all % num_tiles_x
-    pix_min_x_all = tx_all * tile_size
-    pix_min_y_all = ty_all * tile_size
-    
-    # Pre-calculate pixel meshgrid (one tile)
-    py = torch.arange(tile_size, device=device)
-    px = torch.arange(tile_size, device=device)
-    grid_y, grid_x = torch.meshgrid(py, px, indexing='ij')
-    local_pixel_coords = torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2) # (256, 2)
+    # Ensure no gradients flow through indices
+    return tile_ids[sort_indices].detach(), gaussian_ids[sort_indices].detach()
 
 def render_tile_batch(
     batch_indices, tile_boundaries, pix_min_x_all, pix_min_y_all, 
@@ -205,10 +107,8 @@ def render_tile_batch(
     pixel_valid = (pixel_coords[:, :, 0] < W) & (pixel_coords[:, :, 1] < H)
     
     # 2. Gather Gaussians for the tiles in the batch
-    # 256 is usually enough for Fern images_8. 
-    # Vectorizing more than this might hit memory, but 256 is safe.
-    # We use a fixed LIMIT to allow stable broadcasting and compilation.
-    LIMIT = 256
+    # 1024 allows rendering dense regions correctly.
+    LIMIT = 1024
     window = torch.arange(LIMIT, device=device)
     
     # Gather indices (clamped to valid range)

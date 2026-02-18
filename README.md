@@ -8,8 +8,9 @@ This repository provides high-performance implementations of 3D Gaussian Splatti
 - **Metal GPU Rasterizer**: A fully GPU-resident rasterizer implemented in Metal Shading Language. It achieves ~10 it/s on M-series chips, matching specialized PyTorch C++ performance while remaining entirely within the MLX ecosystem.
 - **C++ CPU Rasterizer**: A multi-threaded CPU implementation using Apple's Grand Central Dispatch (GCD) for parallel tile-based rendering.
 
-### PyTorch C++ Rasterizer Fixes
+### PyTorch Fixes
 - **Differentiable Covariance**: Fixed the `grad_cov2D` implementation to allow Gaussians to grow and rotate during training.
+- **High-Quality Python Rasterizer**: Removed the 8x8 tile coverage and 256 depth limits from the pure Python implementation, matching the visual quality of the C++ version.
 - **Atomic Gradient Accumulation**: Implemented thread-safe gradient updates for overlapping Gaussians on the CPU.
 
 ## Setup Instructions
