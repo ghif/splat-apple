@@ -31,6 +31,16 @@ The C++ rasterizer utilizes Apple's **GCD (`dispatch_apply`)**.
 - **Hybrid Interaction Stage**: Currently, both versions share the C++ interaction pre-computation (tile sorting) to keep the GPU kernels focused on the heavy alpha-blending and gradient integration.
 - **Memory Management**: We use `np.asarray()` to ensure that data passed to the extensions remains a view of the original MLX array whenever possible.
 
+## Architectural Advantages over Python
+
+The native implementation (C++/Metal) is not just faster; it is also more accurate than the JIT-compiled Python version due to the removal of two critical limitations:
+
+### 1. Dynamic Tile Coverage
+The Python implementation is restricted to an **8x8 tile expansion** per Gaussian to keep memory usage predictable for the MLX compiler. This causes large Gaussians to appear as clipped squares. The native version calculates exact bounding boxes, allowing Gaussians to span any number of tiles without artifacts.
+
+### 2. Unlimited Depth Complexity
+The Python implementation limits each tile to **256 Gaussians**. In dense regions, this leads to premature termination of the blending loop, causing "black holes" where the background shows through under-rendered areas. The Metal kernel processes the full depth of the scene until the pixel is opaque, resulting in much cleaner and more complete renders.
+
 ## Performance Comparison (Fern Dataset)
 
 Benchmarks show a progressive speedup across implementations:
