@@ -52,7 +52,8 @@ def benchmark_mlx(num_runs=10, rasterizer_type="python"):
         times.append(end - start)
         print(f"  MLX ({rasterizer_type}) Iter {i+1}: {end-start:.4f}s")
         
-    avg = sum(times) / num_runs
+    # Skip first 2 iterations for average to account for JIT/Metal overhead
+    avg = sum(times[2:]) / (num_runs - 2) if num_runs > 2 else sum(times) / num_runs
     return avg
 
 def benchmark_torch(num_runs=10, rasterizer_type="python"):
@@ -85,7 +86,8 @@ def benchmark_torch(num_runs=10, rasterizer_type="python"):
         times.append(end - start)
         print(f"  Torch ({rasterizer_type}) Iter {i+1}: {end-start:.4f}s")
         
-    avg = sum(times) / num_runs
+    # Skip first 2 iterations for average
+    avg = sum(times[2:]) / (num_runs - 2) if num_runs > 2 else sum(times) / num_runs
     return avg
 
 if __name__ == "__main__":

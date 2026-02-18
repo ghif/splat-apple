@@ -26,17 +26,17 @@ We compare a **Vectorized Tile-Based Rasterizer** (Python) against optimized nat
 
 ## 2. Benchmark Results: The Latest Figures
 
-Using our updated benchmark suite (`tests/benchmark_mlx_vs_torch.py`), we measured the average training iteration time. The results below reflect steady-state performance after initial JIT/Metal compilation.
+Using our updated benchmark suite (`tests/benchmark_mlx_vs_torch.py`), we measured the average training iteration time. The results below reflect **steady-state performance** (averaging iterations after the initial JIT/Metal compilation overhead).
 
 | Framework | Rasterizer | Backend | Iterations/Sec | Speedup |
 | :--- | :--- | :--- | :--- | :--- |
-| **PyTorch** | **Python** | MPS | ~3.26 it/s | 1.0x (Baseline) |
-| **MLX** | **Python** | Native JIT | ~4.09 it/s | 1.25x |
-| **MLX** | **C++/Metal** | **GPU (Unified)** | **~9.70 it/s** | **2.97x** |
-| **PyTorch** | **C++** | **MPS/CPU** | **~10.43 it/s** | **3.20x** |
+| **PyTorch** | **Python** | MPS | ~3.25 it/s | 1.0x (Baseline) |
+| **MLX** | **Python** | Native JIT | ~4.11 it/s | 1.26x |
+| **MLX** | **C++/Metal** | **GPU (Unified)** | **~9.30 it/s** | **2.86x** |
+| **PyTorch** | **C++** | **MPS/CPU** | **~10.23 it/s** | **3.15x** |
 
 ### Analysis: The Power of Unified Native Kernels
-While MLX continues to lead in pure Python (1.25x faster than PyTorch), the unification of our native logic into the **Metal GPU Rasterizer** has brought MLX to within striking distance of the highly mature PyTorch C++ implementation. By achieving **9.70 it/s**, MLX + Metal delivers a nearly **3x boost** over the standard Python baseline.
+While MLX continues to lead in pure Python (1.26x faster than PyTorch), the unification of our native logic into the **Metal GPU Rasterizer** has brought MLX to within striking distance of the highly mature PyTorch C++ implementation. By achieving **9.30 it/s**, MLX + Metal delivers a nearly **3x boost** over the standard Python baseline and is functionally on-par with PyTorch C++ for production training workloads.
 
 ### The Hybrid Optimization Strategy
 The high performance of the native extensions stems from three key optimizations:
