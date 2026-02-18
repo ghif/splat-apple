@@ -104,35 +104,30 @@ if __name__ == "__main__":
         
     mlx_py_avg = benchmark_mlx(args.num_runs, rasterizer_type="python")
     try:
-        mlx_c_avg = benchmark_mlx(args.num_runs, rasterizer_type="c_api")
+        mlx_cpp_avg = benchmark_mlx(args.num_runs, rasterizer_type="cpp")
     except Exception as e:
-        print(f"MLX C API Benchmark Failed: {e}")
-        mlx_c_avg = None
-        
-    try:
-        mlx_metal_avg = benchmark_mlx(args.num_runs, rasterizer_type="metal")
-    except Exception as e:
-        print(f"MLX Metal Benchmark Failed: {e}")
-        mlx_metal_avg = None
+        print(f"MLX CPP Benchmark Failed: {e}")
+        mlx_cpp_avg = None
     
     print("\nBenchmark Summary:")
     print(f"  PyTorch (Python): {torch_py_avg:.4f}s/it ({1/torch_py_avg:.2f} it/s)")
     if torch_cpp_avg:
         print(f"  PyTorch (C++):    {torch_cpp_avg:.4f}s/it ({1/torch_cpp_avg:.2f} it/s)")
     print(f"  MLX (Python):     {mlx_py_avg:.4f}s/it ({1/mlx_py_avg:.2f} it/s)")
-    if mlx_c_avg:
-        print(f"  MLX (C API):      {mlx_c_avg:.4f}s/it ({1/mlx_c_avg:.2f} it/s)")
-    if mlx_metal_avg:
-        print(f"  MLX (Metal):      {mlx_metal_avg:.4f}s/it ({1/mlx_metal_avg:.2f} it/s)")
+    if mlx_cpp_avg:
+        print(f"  MLX (C++/Metal):  {mlx_cpp_avg:.4f}s/it ({1/mlx_cpp_avg:.2f} it/s)")
     
     print("\nComparisons:")
-    if mlx_c_avg:
-        speedup_mlx = mlx_py_avg / mlx_c_avg
-        print(f"  MLX C API is {speedup_mlx:.2f}x faster than MLX Python")
+    if mlx_cpp_avg:
+        speedup_mlx = mlx_py_avg / mlx_cpp_avg
+        print(f"  MLX C++ is {speedup_mlx:.2f}x faster than MLX Python")
         
-        speedup_vs_torch_py = torch_py_avg / mlx_c_avg
-        print(f"  MLX C API is {speedup_vs_torch_py:.2f}x faster than PyTorch (Python)")
+        speedup_vs_torch_py = torch_py_avg / mlx_cpp_avg
+        print(f"  MLX C++ is {speedup_vs_torch_py:.2f}x faster than PyTorch (Python)")
         
         if torch_cpp_avg:
-            speedup_vs_torch_cpp = torch_cpp_avg / mlx_c_avg
-            print(f"  MLX C API is {speedup_vs_torch_cpp:.2f}x faster than PyTorch (C++)")
+            speedup_vs_torch_cpp = torch_cpp_avg / mlx_cpp_avg
+            if speedup_vs_torch_cpp > 1.0:
+                print(f"  MLX C++ is {speedup_vs_torch_cpp:.2f}x faster than PyTorch (C++)")
+            else:
+                print(f"  PyTorch (C++) is {1/speedup_vs_torch_cpp:.2f}x faster than MLX C++")
