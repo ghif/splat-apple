@@ -7,44 +7,51 @@ TILE_SIZE = 16
 def _get_tile_interactions_impl(means2D, radii, valid_mask, depths, H, W, tile_size):
     num_tiles_x = math.ceil(W / tile_size)
     num_tiles_y = math.ceil(H / tile_size)
-    num_tiles = num_tiles_x * num_tiles_y
     
-    # Tile bounding boxes
-    min_x = mx.floor((means2D[:, 0] - radii) / tile_size).astype(mx.int32)
-    max_x = mx.ceil((means2D[:, 0] + radii) / tile_size).astype(mx.int32)
-    min_y = mx.floor((means2D[:, 1] - radii) / tile_size).astype(mx.int32)
-    max_y = mx.ceil((means2D[:, 1] + radii) / tile_size).astype(mx.int32)
+    # 1. Compute bounds
+    m_x = mx.clip(mx.floor((means2D[:, 0] - radii) / tile_size).astype(mx.int32), 0, num_tiles_x - 1)
+    max_x = mx.clip(mx.floor((means2D[:, 0] + radii) / tile_size).astype(mx.int32), 0, num_tiles_x - 1)
+    m_y = mx.clip(mx.floor((means2D[:, 1] - radii) / tile_size).astype(mx.int32), 0, num_tiles_y - 1)
+    max_y = mx.clip(mx.floor((means2D[:, 1] + radii) / tile_size).astype(mx.int32), 0, num_tiles_y - 1)
     
-    min_x = mx.clip(min_x, 0, num_tiles_x - 1)
-    max_x = mx.clip(max_x, 0, num_tiles_x - 1)
-    min_y = mx.clip(min_y, 0, num_tiles_y - 1)
-    max_y = mx.clip(max_y, 0, num_tiles_y - 1)
+    nx = max_x - m_x + 1
+    ny = max_y - m_y + 1
+    counts = nx * ny * valid_mask.astype(mx.int32)
     
-    # 8x8 grid expansion
-    OFFSET_SIZE = 8
-    off_range = mx.arange(OFFSET_SIZE)
-    off_y, off_x = mx.meshgrid(off_range, off_range, indexing='ij')
-    off_x = off_x.flatten()
-    off_y = off_y.flatten()
+    # 2. Find offsets and total count
+    offsets = mx.cumsum(counts)
+    total = int(offsets[-1].item())
     
-    abs_x = min_x[:, None] + off_x[None, :]
-    abs_y = min_y[:, None] + off_y[None, :]
+    if total == 0:
+        return mx.array([], dtype=mx.int32), mx.array([], dtype=mx.int32)
     
-    in_range = (abs_x <= max_x[:, None]) & (abs_y <= max_y[:, None]) & valid_mask[:, None] & (radii[:, None] > 0)
+    # 3. Expansion Stage (Pure MLX GPU Trick)
+    active_mask = (counts > 0).astype(mx.int32)
+    num_active = int(mx.sum(active_mask).item())
+    active_indices = mx.sort(mx.argsort(active_mask)[-num_active:])
     
-    tile_ids = mx.where(in_range, abs_y * num_tiles_x + abs_x, mx.array(num_tiles, dtype=mx.int32))
-    gaussian_ids = mx.tile(mx.arange(means2D.shape[0])[:, None], (1, OFFSET_SIZE * OFFSET_SIZE))
+    active_counts = counts[active_indices]
+    active_offsets = mx.cumsum(active_counts)
+    active_starts = mx.concatenate([mx.array([0]), active_offsets[:-1]])
     
-    tile_ids_flat = tile_ids.flatten()
-    gaussian_ids_flat = gaussian_ids.flatten()
+    mark = mx.zeros((total,), dtype=mx.int32)
+    mark[active_starts] = 1
+    map_idx = mx.cumsum(mark) - 1
+    gaussian_ids = active_indices[map_idx]
     
-    # Sort by TileID and Depth
+    # 4. Compute Tile IDs
+    local_idx = mx.arange(total, dtype=mx.int32) - active_starts[map_idx].astype(mx.int32)
+    cur_nx = nx[gaussian_ids]
+    tile_ids = (m_y[gaussian_ids] + (local_idx // cur_nx)) * num_tiles_x + (m_x[gaussian_ids] + (local_idx % cur_nx))
+    
+    # 5. Sort by TileID and Depth
+    d_vals = depths[gaussian_ids]
     d_min, d_max = mx.min(depths), mx.max(depths)
-    depth_quant = ((mx.tile(depths[:, None], (1, 64)).flatten() - d_min) / (d_max - d_min + 1e-6) * 0xFFFFFFFF).astype(mx.uint64)
-    keys = (tile_ids_flat.astype(mx.uint64) << 32) | depth_quant
+    depth_quant = ((d_vals - d_min) / (d_max - d_min + 1e-6) * 0xFFFFFFFF).astype(mx.uint64)
+    keys = (tile_ids.astype(mx.uint64) << 32) | depth_quant
     
     sort_indices = mx.argsort(keys)
-    return tile_ids_flat[sort_indices], gaussian_ids_flat[sort_indices]
+    return mx.stop_gradient(tile_ids[sort_indices]), mx.stop_gradient(gaussian_ids[sort_indices])
 
 def render_tile_batch(
     batch_indices, tile_boundaries, pix_min_x_all, pix_min_y_all, 
@@ -58,7 +65,7 @@ def render_tile_batch(
     e_indices = tile_boundaries[batch_indices + 1]
     counts = e_indices - s_indices
     
-    LIMIT = 256
+    LIMIT = 1024
     gather_indices = mx.clip(s_indices[:, None] + mx.arange(LIMIT)[None, :], 0, sorted_gaussian_ids.shape[0] - 1)
     gaussian_id_batch = sorted_gaussian_ids[gather_indices]
     

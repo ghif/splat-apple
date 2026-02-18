@@ -34,23 +34,9 @@ setup(
     description='MLX C API Rasterizer (Raw C++)',
     ext_modules=[
         Extension(
-            'mlx_gs.renderer.rasterizer_c_api', # Importable name
-            sources=[
-                'mlx_gs/csrc/rasterizer.cpp',
-                str(get_nanobind('src'))
-            ],
-            include_dirs=[
-                str(get_nanobind('include')),
-                os.path.join(os.path.dirname(str(get_nanobind('include'))), 'ext', 'robin_map', 'include')
-            ], 
-            library_dirs=[],
-            libraries=[],
-            extra_compile_args=['-std=c++17', '-O3', '-fPIC', '-fvisibility=hidden'],
-            language='c++'
-        ),
-        Extension(
             'mlx_gs.renderer._rasterizer_metal',
             sources=[
+
                 'mlx_gs/csrc/rasterizer_metal.mm',
                 str(get_nanobind('src'))
             ],

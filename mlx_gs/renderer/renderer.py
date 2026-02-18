@@ -2,14 +2,10 @@ import mlx.core as mx
 from mlx_gs.renderer.projection import project_gaussians
 from mlx_gs.renderer import rasterizer
 try:
-    from mlx_gs.renderer import rasterizer_c
-except ImportError:
-    rasterizer_c = None
-
-try:
     from mlx_gs.renderer import rasterizer_metal
 except ImportError:
     rasterizer_metal = None
+
 
 def _render_stage1(params, camera_dict):
     # Standard projection
