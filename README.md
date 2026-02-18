@@ -23,7 +23,7 @@ python setup.py build_ext --inplace
 ```
 
 ### 2. Build MLX Native Extensions
-Required for the `c_api` (CPU) and `metal` (GPU) rasterizer modes in MLX.
+Required for the `cpp` (GPU-resident) rasterizer mode in MLX.
 ```bash
 python setup_mlx.py build_ext --inplace
 ```
@@ -34,11 +34,7 @@ python setup_mlx.py build_ext --inplace
 The MLX implementation is highly optimized for Apple Silicon unified memory.
 - **Metal GPU (Fastest)**:
   ```bash
-  python train_fern_mlx.py --rasterizer metal
-  ```
-- **C++ CPU**:
-  ```bash
-  python train_fern_mlx.py --rasterizer c_api
+  python train_fern_mlx.py --rasterizer cpp
   ```
 
 ### PyTorch Training

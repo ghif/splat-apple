@@ -40,28 +40,12 @@ def render(gaussians, camera, background=None, rasterizer_type="python"):
     # Stage 1: Projection (Compiled independent of interactions)
     means2D, cov2D, radii, valid_mask, depths, colors = _render_stage1(params, cam_dict)
     
-    if rasterizer_type == "c_api":
-        if rasterizer_c is None:
-            raise ImportError("C API rasterizer not available. Please build the extension.")
-        
-        # c_api mode uses the C API pathway for performance
-        sorted_tile_ids, sorted_gaussian_ids = rasterizer_c.get_tile_interactions(
-            means2D, radii, valid_mask, depths, camera.H, camera.W, rasterizer.TILE_SIZE
-        )
-        
-        return rasterizer_c.render_tiles(
-            means2D, cov2D, params["opacities"], colors, 
-            sorted_tile_ids, sorted_gaussian_ids, 
-            camera.H, camera.W, rasterizer.TILE_SIZE, background
-        )
-    elif rasterizer_type == "metal":
+    if rasterizer_type == "cpp":
         if rasterizer_metal is None or rasterizer_metal.rasterizer_metal is None:
             raise ImportError("Metal rasterizer not available. Please build the extension.")
             
-        # Metal mode uses C API for interactions (for now) but Metal for rasterization
+        # Metal mode uses C API for interactions (shared logic)
         if rasterizer_c is None:
-             # Fallback to python interactions if C API missing? Or reusing C API logic
-             # Assuming interactions are similar.
              raise ImportError("Metal rasterizer requires C API interactions module.")
 
         sorted_tile_ids, sorted_gaussian_ids = rasterizer_c.get_tile_interactions(

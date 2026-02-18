@@ -97,10 +97,8 @@ def run_training(num_iterations: int = 2000, rasterizer_type="python"):
     os.makedirs("results", exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join("results", f"fern_mlx_{timestamp}")
-    if rasterizer_type == "c_api":
-        output_dir = os.path.join("results", f"fern_mlx_c_api_{timestamp}")
-    elif rasterizer_type == "metal":
-        output_dir = os.path.join("results", f"fern_mlx_metal_{timestamp}")
+    if rasterizer_type == "cpp":
+        output_dir = os.path.join("results", f"fern_mlx_cpp_{timestamp}")
     progress_dir = os.path.join(output_dir, "progress")
     ply_dir = os.path.join(output_dir, "ply")
     os.makedirs(progress_dir, exist_ok=True)
@@ -138,7 +136,7 @@ def run_training(num_iterations: int = 2000, rasterizer_type="python"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Gaussian Splatting on MLX")
     parser.add_argument("--num_iterations", type=int, default=2000, help="Number of training steps")
-    parser.add_argument("--rasterizer", type=str, default="python", choices=["python", "c_api", "metal"], help="Rasterizer version")
+    parser.add_argument("--rasterizer", type=str, default="python", choices=["python", "cpp"], help="Rasterizer version")
     args = parser.parse_args()
     
     run_training(num_iterations=args.num_iterations, rasterizer_type=args.rasterizer)

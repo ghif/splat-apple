@@ -129,18 +129,9 @@ def render_tiles_jit(means2D, cov2D, sig_opacities, colors, sorted_gaussian_ids,
     canvas = full_batch.reshape(num_tiles_y, num_tiles_x, tile_size, tile_size, 3)
     return canvas.transpose(0, 2, 1, 3, 4).reshape(num_tiles_y * tile_size, num_tiles_x * tile_size, 3)[:H, :W, :]
 
-def render_tiles(means2D, cov2D, opacities, colors, sorted_tile_ids, sorted_gaussian_ids, H, W, tile_size: int = TILE_SIZE, background=None, rasterizer_type="python"):
+def render_tiles(means2D, cov2D, opacities, colors, sorted_tile_ids, sorted_gaussian_ids, H, W, tile_size: int = TILE_SIZE, background=None):
     if background is None: background = mx.zeros((3,))
     
-    if rasterizer_type in ["cpp", "c_api"]:
-        from .rasterizer_cpp import render_tiles_cpp
-        return render_tiles_cpp(
-            means2D, cov2D, opacities, colors, 
-            sorted_tile_ids, sorted_gaussian_ids, 
-            H, W, tile_size, background,
-            use_c_api=(rasterizer_type == "c_api")
-        )
-
     # Sync for NumPy searchsorted
     num_tiles = math.ceil(W/tile_size) * math.ceil(H/tile_size)
     tile_boundaries = np.searchsorted(np.array(sorted_tile_ids), np.arange(num_tiles + 1))

@@ -1,5 +1,6 @@
 # Project Instructions
 - Always use the conda environment `gs-mps` for this project.
+- Do not push to the github remote for every change.
 
 # C++ Rasterizer Fixes (2026-02-17)
 The C++ rasterizer (`cpp_gs`) has been fixed and verified to be correct and performant (~3x faster than Python).

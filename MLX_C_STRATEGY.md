@@ -4,9 +4,8 @@ This document explains the implementation and optimization strategy for the MLX-
 
 ## Implementation Overview
 
-We provide two optimized native rasterizers to replace the pure Python/JIT implementation:
-1.  **C++ Rasterizer (`mlx_gs/csrc/rasterizer.cpp`)**: A multi-threaded CPU implementation using Apple's Grand Central Dispatch (GCD).
-2.  **Metal Rasterizer (`mlx_gs/csrc/rasterizer.metal`)**: A high-performance GPU-resident implementation using Metal Compute Shaders.
+We provide an optimized native rasterizer to replace the pure Python/JIT implementation. This is unified under the `--rasterizer cpp` flag in the training scripts:
+1.  **Metal Rasterizer (`mlx_gs/csrc/rasterizer.metal`)**: A high-performance GPU-resident implementation using Metal Compute Shaders. This is the exclusive implementation for the `cpp` flag, leveraging MPS on Apple Silicon.
 
 Both are integrated into the MLX autograd system via `mx.custom_function` and `nanobind`.
 
