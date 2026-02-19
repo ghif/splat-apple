@@ -1,1 +1,1 @@
-python train_mlx.py --rasterizer cpp --num_iterations 10000 --data_dir /Users/mghifary/Work/Code/AI/data/gsplat/nerf_real_360/pinecone --img_folder images_8 --normalize
+python train_mlx.py --rasterizer cpp --num_iterations 10000 --data_dir ../data/gsplat/nerf_real_360/pinecone --img_folder images_8 --normalize

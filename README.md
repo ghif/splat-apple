@@ -65,24 +65,41 @@ python setup.py build_ext --inplace
 
 ## Running Training
 
+The training scripts are now generic and support any COLMAP-formatted dataset. Use the `--data_dir` flag to specify your dataset path.
+
 ### MLX Implementation (Fastest)
-The MLX version is designed from the ground up for Apple's Unified Memory Architecture.
-```bash
-# High-Performance Metal Mode (Recommended)
-python train_fern_mlx.py --rasterizer cpp
+The MLX version is designed from the ground up for Apple's Unified Memory Architecture and features a full Metal-resident rasterizer.
 
-# High-Quality Python Reference
-python train_fern_mlx.py --rasterizer python
+```bash
+# General usage
+python train_mlx.py --data_dir /path/to/dataset --img_folder images_8 --rasterizer cpp
+
+# Example: Fern dataset (LLFF)
+python train_mlx.py --data_dir data/nerf_llff_data/fern --img_folder images_8 --rasterizer cpp
+
+# Example: Pinecone dataset (Mip-NeRF 360) with normalization
+python train_mlx.py --data_dir data/nerf_real_360/pinecone --img_folder images_8 --rasterizer cpp --normalize
 ```
 
-### PyTorch Implementation (Stable)
+### PyTorch Implementation
 ```bash
-# Multi-threaded C++ Mode
-python train_fern_torch.py --rasterizer cpp
+# General usage
+python train_torch.py --data_dir /path/to/dataset --img_folder images_8 --rasterizer cpp
 
-# High-Quality Python Reference
-python train_fern_torch.py --rasterizer python
+# Example: Fern dataset
+python train_torch.py --data_dir data/nerf_llff_data/fern --img_folder images_8 --rasterizer cpp
 ```
+
+### Helper Shell Scripts
+For convenience, several shell scripts are provided to run training on specific datasets with pre-configured parameters:
+```bash
+# Train on Fern, Pinecone, Room, or T-Rex
+sh train_fern.sh
+sh train_pinecone.sh
+sh train_room.sh
+sh train_trex.sh
+```
+Note: You may need to edit the `data_dir` path inside these scripts to match your local setup.
 ---
 
 ## Benchmarking
