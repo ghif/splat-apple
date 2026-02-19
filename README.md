@@ -8,10 +8,10 @@ Benchmarked on the standard **Fern** scene (10,091 Gaussians):
 
 | Backend | Implementation | Speed (Steady-State) | Speedup |
 | :--- | :--- | :--- | :--- |
-| **MLX** | **C++ Metal (GPU-Resident)** | **~42.3 it/s** | **50x** |
-| **PyTorch** | **C++ (GCD)** | **~10.6 it/s** | **12x** |
-| **MLX** | Pure Python (Reference) | ~1.2 it/s | 1.4x |
-| **PyTorch** | Pure Python (Reference) | ~0.8 it/s | 1.0x |
+| **MLX** | **C++ Metal (GPU-Resident)** | **~38.50 it/s** | **45.8x** |
+| **PyTorch** | **C++ (GCD)** | **~10.60 it/s** | **12.6x** |
+| **MLX** | Pure Python (Reference) | ~1.15 it/s | 1.3x |
+| **PyTorch** | Pure Python (Reference) | ~0.84 it/s | 1.0x |
 
 **Fern Scene**  
 ![Training Progress Fern](resources/fern_training.gif)
