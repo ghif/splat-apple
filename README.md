@@ -14,12 +14,16 @@ Benchmarked on the standard **Fern** scene (10,091 Gaussians):
 | **PyTorch** | Pure Python (Reference) | ~0.8 it/s | 1.0x |
 
 **Fern Scene**  
-![Training Progress Fern](resources/training_progress.gif)
+![Training Progress Fern](resources/fern_training.gif)
 
 **Pinecone Scene**  
 ![Training Progress Pinecone](resources/pinecone_training.gif)
 
+**Room Scene**  
+![Training Progress Room](resources/room_training.gif)
 
+**T-Rex Scene**  
+![Training Progress T-Rex](resources/trex_training.gif)
 
 ---
 
